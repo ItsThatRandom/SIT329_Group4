@@ -1,0 +1,41 @@
+module button(
+	input clk,
+	input button,
+	output led
+);
+
+parameter clock_time = 32'd48_000_000;
+
+reg [31:0]cnt;
+reg ledstat;
+
+reg clk200ms;
+
+always@(posedge clk)
+	if (cnt==clock_time/5)
+		begin
+			cnt <= 32'b0;
+			clk200ms <= !clk200ms;
+		end
+	else
+		cnt <= cnt + 1;
+
+always@(posedge clk200ms)
+	begin	
+	
+		if (button == 1'b0)
+			begin 
+				ledstat <= 1'b0;
+				
+			end
+		if (button == 1'b1)
+			begin
+				ledstat <= 1'b1;
+			end
+		
+	end
+assign led = ledstat;
+
+
+
+endmodule
