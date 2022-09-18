@@ -1,0 +1,103 @@
+`timescale 1ns/1ns
+
+module sensor_tb();
+  reg t_clk;
+  wire [31:0] t_outp;
+  wire t_bidir;
+
+  sensor test(.clk(t_clk), .outp(t_outp), .bidir(t_bidir));
+  
+  // Receiver behaviour. If module is set to receiving, send 'inc_data' to module to simulate sensor data.
+  reg inc_data;
+  assign t_bidir = !test.bidir_en ? inc_data : 1'bZ;
+  
+  reg [39:0] test_data [0:3]; // Test data to send
+  integer i;
+  integer j;
+
+  initial begin
+    test_data[0] = 40'b1001100111100010001001001000010011011010; // Valid transfer
+    test_data[1] = 40'b1110101100001011101011000011010001011110; // Invalid transfer
+    test_data[2] = 40'b0111001010011010101010101110001101010101; // Invalid transfer
+    
+    t_clk = 0;
+    forever #1 t_clk = ~t_clk;
+  end
+  
+  initial begin
+    
+    $dumpfile("dump.vcd");
+    $dumpvars(1, sensor_tb);
+    
+    for (j = 0; j < 3; j++) begin
+
+      #1800200 // Time till Trigger signal
+      $display("Values at next cycle: 1Mhz Count: %d, Sending(1)/Receiving(0): %d, status: %b ",test.cnt_1mhz, test.bidir_en, test.comm_status);
+      $display("===========================================================================================================");
+
+
+      #1800000 // 18ms 
+      $display("Post raise: cnt: %d, H/L: %d, Sending(1)/Receiving(0): %d ",test.cnt_1mhz, test.bidir, test.bidir_en);
+      $display("===========================================================================================================");
+
+      #4000 // 40us
+      inc_data = 1'b0; // 40us after line raised and Sensor becoming sender, set low for response signal.
+
+      #100 // 1us
+      $display("Sensor lowers line after 40us: cnt: %d, H/L: %d, prev cnt: %d, status: %b, Sending(1)/Receiving(0): %d ",test.cnt_1mhz, test.bidir, test.prev_cnt, test.comm_status, test.bidir_en);
+      $display("===========================================================================================================");
+
+      #7900 // 79us
+      inc_data = 1'b1; // Sensor raising from low to high
+
+      #100 // 1us
+      $display("Post DOWN received: cnt: %d, H/L: %d, prev cnt: %d, status: %b ",test.cnt_1mhz, test.bidir, test.prev_cnt, test.comm_status);
+      $display("===========================================================================================================");
+
+      #7900 // 79us
+      inc_data = 1'b0; // Sensor lowering from high to low
+
+      #100 // 1us
+      $display("Post UP received: cnt: %d, H/L: %d, prev cnt: %d, status: %b ",test.cnt_1mhz, test.bidir, test.prev_cnt, test.comm_status);
+      $display("===========================================================================================================");
+
+
+      // Run through transfer of all bits.
+      for (int i = 39; i != -1; i--) begin
+        #4900 // 49us
+        inc_data = 1'b1;
+
+        case (test_data[j][i])
+
+          1'b0: begin
+            #2600 // 25us = bit was 0.
+            inc_data = 1'b0; // Set low 
+
+            #100 // 1us
+            $display("Post bit %d, expected 0. cnt: %d, H/L: %d, all bits: %b", i, test.cnt_1mhz, test.bidir, test.raw_data);
+          end
+
+          1'b1: begin
+            #7000 // 70us = bit was 1
+            inc_data = 1'b0; // Set low
+
+            #100 // 1us
+            $display("Post bit %d, expected 1. cnt: %d, H/L: %d, all bits: %b", i, test.cnt_1mhz, test.bidir, test.raw_data);
+          end
+
+        endcase
+
+        $display("---------------------------------------------------------------------------------------------------------------");
+      end
+      #100
+      $display("Finished transfer, error occured if Raw/Final data is all 0's... \nRaw data: %b", test.raw_data, 
+               "\nChecksum: %b", (test.sum_data[7:0] + test.sum_data[9:8]) + test.raw_data[7:0],
+               "\nFinal Data (no checksum): %b", test.fin_data,
+               "\nIDX: %d", test.data_idx);
+      $display("++++++++++++++++++++++++++++++++++++++++++++++++++++");
+    end
+
+    
+    $finish;
+  end
+endmodule
