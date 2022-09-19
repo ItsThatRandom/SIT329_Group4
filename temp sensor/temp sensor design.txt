@@ -3,6 +3,7 @@
 module sensor (
   input wire clk, // 50MHz input clock
   output [31:0] outp,
+  output wire LED,
   inout bidir // Bidirectional sensor bus
 );
 
@@ -10,8 +11,8 @@ module sensor (
   reg clk_1mhz_en; // 1 MHz : 1/50 FPGA clock
   reg [6:0] clk_cnt; // clock count
   reg [20:0] cnt_1mhz; // 1 Mhz cycle count (1us)
-  reg [20:0] prev_cnt; // Stores the previous cnt_1mhz value after it switches to 0.
   reg [20:0] trig_timer; // Target trigger signal time (2 Seconds).
+  reg line_switch; // Used to track wier changes for timing.
 
   // Port management
   reg dout; // Data sending to sensor wire
@@ -25,6 +26,12 @@ module sensor (
   reg [9:0] sum_data; // sum of data without checksum
   reg [7:0] int_checksum; // Checksum comparison
   
+  reg [7:0] temp_int;
+  reg [7:0] temp_dec;
+  reg [7:0] hum_int;
+  reg [7:0] hum_dec;
+  
+  reg led_test;
  
 
   initial begin
@@ -32,7 +39,6 @@ module sensor (
 	clk_1mhz_en <= 1'b0;
     clk_cnt <= 7'b0; // Start clock counter at zero
     cnt_1mhz <= 21'b0; // Start value at zero
-    prev_cnt <= 21'b0;
 //     trig_timer <= 21'd1999999; // Set target trigger signal time to 2 seconds.
     trig_timer <= 21'd18001; // For testing sake, set trig far lower.
     dout <= 1;
@@ -43,15 +49,29 @@ module sensor (
     fin_data <= 32'b0;
     sum_data <= 10'b0;
     int_checksum <= 8'b11111111;
-    
+    hum_int <= 8'b0;
+    hum_dec <= 8'b0; 
+    temp_int <= 8'b0; 
+    temp_dec <= 8'b0;
+	led_test <= 1'b0;
+    line_switch <= 1'b0;
+            
 
   end
 	
   // single bus communication behaviour with sensor
   assign bidir = bidir_en ? dout : 1'bZ;
   assign outp = fin_data;
+  assign LED = led_test;
 
-  // Clock Management for 50 Mhz to 1Mhz
+//   // Clock Management for 50 Mhz to 1Mhz
+//   always @(posedge clk) begin
+    
+    
+//   end
+
+
+  // Action taken every 1Mhz (1us)
   always @(posedge clk) begin
     
     // Default Assignment
@@ -63,11 +83,7 @@ module sensor (
     end
     else
       clk_cnt <= clk_cnt +1; // Increase clk counter
-  end
-
-
-  // Action taken every 1Mhz (1us)
-  always @(posedge clk) begin  
+    
     if (clk_1mhz_en) begin     
       
       // Trigger signal send after every 2 seconds
@@ -75,6 +91,7 @@ module sensor (
         $display("Trigger signal - dropping to low for 18ms. Pre operation: cnt: %d, status: %b, H/L: %b", cnt_1mhz, comm_status, dout);
         comm_status[0] <= 1; // Set to active
         dout <= 0; // Drop low
+        cnt_1mhz <= 21'b0; // Reset for timings
     
       end
       
@@ -88,6 +105,7 @@ module sensor (
             $display("Trigger signal - 18ms done, raise and set to receive. cnt: %d, status: %b, H/L: %b", cnt_1mhz, comm_status, dout);
           	dout <= 1; // Set to high
             bidir_en <= 0; // Set to receiver
+            cnt_1mhz <= 21'b0; // Reset for timings
           end
           else
             cnt_1mhz <= cnt_1mhz + 1; // 1 mhz count up
@@ -96,9 +114,19 @@ module sensor (
         
         // AWAIT RESPONSE DOWN
         else if (comm_status[1] == 0) begin // Receiver but no response signal yet.
-          if ( (prev_cnt >= 76) & (prev_cnt <= 84) & (bidir == 1)) begin// Covers the DOWN of the response 
+          
+          // Wire value change check & counter reset
+          if ((bidir == 0) & (line_switch == 0)) begin
+				cnt_1mhz <= 0;
+            line_switch <= 1;
+          end
+          
+          else if ( (cnt_1mhz >= 76) & (cnt_1mhz <= 84) & (bidir == 1)) begin// Covers the DOWN of the response 
             $display("Response signal DOWN 80us received, await 80us up. cnt: %d, status: %b, H/L: %b", cnt_1mhz, comm_status, bidir);
             comm_status[1] <= 1; // Response DOWN received
+            cnt_1mhz <= 21'b0; // Reset for timings
+            line_switch <= 0;
+            
           end
           else
             cnt_1mhz <= cnt_1mhz + 1; // 1 mhz count up
@@ -106,44 +134,67 @@ module sensor (
         
         // AWAIT RESPONSE UP
         else if (comm_status[2] == 0) begin
-          if ( (prev_cnt >= 76) & (prev_cnt <= 84) & (bidir == 0)) begin // Covers the UP of the response
+          
+          if ( (cnt_1mhz >= 76) & (cnt_1mhz <= 84) & (bidir == 0)) begin // Covers the UP of the response
             $display("Response signal UP 80us received, bit transfer begins now. cnt: %d, status: %b", cnt_1mhz, comm_status);
             comm_status[2] <= 1; // Response UP received. Response signal complete
+            cnt_1mhz <= 21'b0; // Reset for timings
           end
           else
             cnt_1mhz <= cnt_1mhz + 1; // 1 mhz count up
         end
         
+        // Wire value change check & counter reset
+        else if ((bidir == 1) & (line_switch == 0)) begin
+          cnt_1mhz <= 0;
+          line_switch <= 1;
+        end
+        
         // DATA READING: EACH BIT SET APPROPRIATE VALUE
         else if ( bidir == 0 ) begin // communcation active & response signal complete       
+          
+          
           
           // IF ALL BITS TRANSFERRED
           if ((data_idx > 39) & (cnt_1mhz == 0)) begin // IDX loops above 39 after 0 and only occur first cycle after.
             
-            fin_data <= raw_data[39:8];
-            if (int_checksum != (sum_data[7:0] + sum_data[9:8] + raw_data[7:0])) begin // wrap around the first two bits of sum data and add with checksum.
-              raw_data <= 40'b0; // Error in checksum, reset values to zero indicating error.
+            // Set values to 0, will only change to new values if checksums valid.
+            fin_data <= 32'b0;
+            hum_int <= 8'b0;
+            hum_dec <= 8'b0; 
+            temp_int <= 8'b0; 
+            temp_dec <= 8'b0;
+            led_test <= 1'b0;
+            
+            if (int_checksum == (sum_data[7:0] + sum_data[9:8] + raw_data[7:0])) begin // wrap around the first two bits of sum data and add with checksum.
+              // Valid checksum, update values.
               fin_data <= raw_data[39:8];
-                  
+              hum_int[7:0] <= raw_data[39:32];
+              hum_dec[7:0] <= raw_data[31:24];
+              temp_int[7:0] <= raw_data[23:16];
+              temp_dec[7:0] <= raw_data[15:8]; 
+			  led_test <= 1'b1;  
             end
             cnt_1mhz <= cnt_1mhz + 1; // 1 mhz count up
           end
           
           // BIT = 0
-          else if ( (prev_cnt >= 22) & (prev_cnt <= 32) ) begin // Bit will be a 0 (26-28us), with 4us leeway.
-            $display("Bit %d = 0,  cnt: %d, prev_cnt: %d, all bits: %b", data_idx, cnt_1mhz, prev_cnt, raw_data );
+          else if ( (cnt_1mhz >= 22) & (cnt_1mhz <= 32) ) begin // Bit will be a 0 (26-28us), with 4us leeway.
+            $display("Bit %d = 0,  cnt: %d, all bits: %b", data_idx, cnt_1mhz, raw_data );
             raw_data[data_idx] <= 0; // Set value into correct position
             data_idx <= data_idx -1; 
-            prev_cnt <= 0;
+            cnt_1mhz <= 0;
+            line_switch <= 1;
             sum_data <= (raw_data[39:32] + raw_data[31:24] + raw_data[23:16] + raw_data[15:8]); // Update with new sum
           end
           
           // BIT = 1
-          else if ( (prev_cnt >= 66) & (prev_cnt <= 74) ) begin // Bit will be a 1 (70us), with 4us leeway.
-            $display("Bit %d = 1,  cnt: %d, prev_cnt: %d, all bits: %b", data_idx, cnt_1mhz, prev_cnt, raw_data );
+          else if ( (cnt_1mhz >= 66) & (cnt_1mhz <= 74) ) begin // Bit will be a 1 (70us), with 4us leeway.
+            $display("Bit %d = 1,  cnt: %d, all bits: %b", data_idx, cnt_1mhz, raw_data );
             raw_data[data_idx] <= 1; // Set value into correct position
             data_idx <= data_idx -1; 
-            prev_cnt <= 0;
+            cnt_1mhz <= 0;
+            line_switch <= 1;
             sum_data <= (raw_data[39:32] + raw_data[31:24] + raw_data[23:16] + raw_data[15:8]); // Update with new sum
           end
           
@@ -161,7 +212,7 @@ module sensor (
             data_idx <= 6'd39; // Starts at lhs to mimic how its received.
             comm_status <= 3'b0;
             sum_data <= 10'b0;
-            prev_cnt<= 21'b0;
+            line_switch <= 1'b0;
             
           end        
         end
@@ -172,11 +223,5 @@ module sensor (
         cnt_1mhz <= cnt_1mhz + 1; // 1 mhz count up
     end
   end
-  
-  // Replaces the need to reset counter manually each time.
-  always @(bidir) begin
-    prev_cnt <= cnt_1mhz;
-    cnt_1mhz <= 0;
-  end    
   
 endmodule
