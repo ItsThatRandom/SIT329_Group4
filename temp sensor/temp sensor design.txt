@@ -1,11 +1,5 @@
 `timescale 1ns/1ns
-// ----------------------------------------------------------------------------------
-// TODO:
-// - First iteration runs correctly in testbench, recently added the loop the following readings and 
-//	 have run into issues for second loop which breaks the third as well.
-//	 when trigger signal finished and waiting to recieving response, count for timing not resetting correctly? 
-//
-// -----------------------------------------------------------------------------------
+
 module sensor (
   input wire clk, // 50MHz input clock
 //   input inp,
@@ -95,12 +89,8 @@ module sensor (
           if (cnt_1mhz == 17999) begin // Trigger signal check: waited low for 18,000us (18ms)
             $display("Trigger signal - 18ms done, raise and set to receive. cnt: %d, status: %b, H/L: %b", cnt_1mhz, comm_status, dout);
           	dout <= 1; // Set to high
-            
-          end
-          
-          // SET TO RECEIVER (has to occur one cycle after to ensure line goes high before turning receiver)
-          if (prev_cnt == 18000)
             bidir_en <= 0; // Set to receiver
+          end
           else
             cnt_1mhz <= cnt_1mhz + 1; // 1 mhz count up
           
@@ -187,9 +177,8 @@ module sensor (
   
   // Replaces the need to reset counter manually each time.
   always @(bidir) begin
-    prev_cnt = cnt_1mhz;
+    prev_cnt <= cnt_1mhz;
     cnt_1mhz <= 0;
-    $display("line switch"); // For identifying issue with second loop and count reset/high-low switching.
   end    
   
 endmodule

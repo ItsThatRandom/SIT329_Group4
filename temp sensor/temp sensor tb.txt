@@ -14,11 +14,11 @@ module sensor_tb();
   reg [39:0] test_data [0:3]; // Test data to send
   integer i;
   integer j;
-
+  // Check that 1mhz enable activates every on every 50th cycle. Clock is 50mhz, for tb #2 is a complete cycle, so on every #100, 1mhz enable activates  
   initial begin
     test_data[0] = 40'b1001100111100010001001001000010011011010; // Valid transfer
     test_data[1] = 40'b1110101100001011101011000011010001011110; // Invalid transfer
-    test_data[2] = 40'b0111001010011010101010101110001101010101; // Invalid transfer
+    test_data[2] = 40'b0111001010011010101010101110001101100100; // Valid transfer
     
     t_clk = 0;
     forever #1 t_clk = ~t_clk;
@@ -30,10 +30,21 @@ module sensor_tb();
     $dumpvars(1, sensor_tb);
     
     for (j = 0; j < 3; j++) begin
-
-      #1800200 // Time till Trigger signal
-      $display("Values at next cycle: 1Mhz Count: %d, Sending(1)/Receiving(0): %d, status: %b ",test.cnt_1mhz, test.bidir_en, test.comm_status);
-      $display("===========================================================================================================");
+      
+      inc_data = 1'b1;
+      
+      // Shorter timing second run around
+      if(j > 0) begin
+        // Check results implemented at end of last cycle
+        #1800000 // Time till Trigger signal
+        $display("===========================================================================================================");
+      end
+      
+      else begin      
+        // Check results implemented at end of last cycle
+        #1800200 // Time till Trigger signal
+        $display("===========================================================================================================");
+      end
 
 
       #1800000 // 18ms 
@@ -90,11 +101,14 @@ module sensor_tb();
         $display("---------------------------------------------------------------------------------------------------------------");
       end
       #100
-      $display("Finished transfer, error occured if Raw/Final data is all 0's... \nRaw data: %b", test.raw_data, 
+      $display("Finished transfer, error occured if Raw data is all 0's, final data will not change value \nRaw data: %b", test.raw_data, 
                "\nChecksum: %b", (test.sum_data[7:0] + test.sum_data[9:8]) + test.raw_data[7:0],
                "\nFinal Data (no checksum): %b", test.fin_data,
                "\nIDX: %d", test.data_idx);
+      
+      #100
       $display("++++++++++++++++++++++++++++++++++++++++++++++++++++");
+      
     end
 
     
