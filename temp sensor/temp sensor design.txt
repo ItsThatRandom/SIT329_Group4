@@ -2,8 +2,6 @@
 
 module sensor (
   input wire clk, // 50MHz input clock
-//   input inp,
-//   input bidir_en, // Enable for sending.
   output [31:0] outp,
   inout bidir // Bidirectional sensor bus
 );
