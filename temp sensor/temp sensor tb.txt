@@ -55,21 +55,21 @@ module sensor_tb();
       inc_data = 1'b0; // 40us after line raised and Sensor becoming sender, set low for response signal.
 
       #100 // 1us
-      $display("Sensor lowers line after 40us: cnt: %d, H/L: %d, prev cnt: %d, status: %b, Sending(1)/Receiving(0): %d ",test.cnt_1mhz, test.bidir, test.prev_cnt, test.comm_status, test.bidir_en);
+      $display("Sensor lowers line after 40us: cnt: %d, H/L: %d, status: %b, Sending(1)/Receiving(0): %d ",test.cnt_1mhz, test.bidir, test.comm_status, test.bidir_en);
       $display("===========================================================================================================");
 
       #7900 // 79us
       inc_data = 1'b1; // Sensor raising from low to high
 
       #100 // 1us
-      $display("Post DOWN received: cnt: %d, H/L: %d, prev cnt: %d, status: %b ",test.cnt_1mhz, test.bidir, test.prev_cnt, test.comm_status);
+      $display("Post DOWN received: cnt: %d, H/L: %d, status: %b ",test.cnt_1mhz, test.bidir, test.comm_status);
       $display("===========================================================================================================");
 
       #7900 // 79us
       inc_data = 1'b0; // Sensor lowering from high to low
 
       #100 // 1us
-      $display("Post UP received: cnt: %d, H/L: %d, prev cnt: %d, status: %b ",test.cnt_1mhz, test.bidir, test.prev_cnt, test.comm_status);
+      $display("Post UP received: cnt: %d, H/L: %d, status: %b ",test.cnt_1mhz, test.bidir, test.comm_status);
       $display("===========================================================================================================");
 
 
@@ -104,7 +104,10 @@ module sensor_tb();
       $display("Finished transfer, error occured if Raw data is all 0's, final data will not change value \nRaw data: %b", test.raw_data, 
                "\nChecksum: %b", (test.sum_data[7:0] + test.sum_data[9:8]) + test.raw_data[7:0],
                "\nFinal Data (no checksum): %b", test.fin_data,
-               "\nIDX: %d", test.data_idx);
+               "\nTemperature: %d.%d C", test.temp_int, test.temp_dec,
+               "\nHumidityL %d.%d", test.hum_int, test.hum_dec,
+               "\nIDX: %d", test.data_idx,
+               "\nLED: %b", test.led_test);
       
       #100
       $display("++++++++++++++++++++++++++++++++++++++++++++++++++++");
