@@ -1,0 +1,263 @@
+`timescale 1ns/1ns
+
+module DHT11_sensor (
+  input wire clk, // 50MHz input clock
+  // output [31:0] outp,
+  output wire [7:0] LED,
+  output wire ext_LED,
+  inout bidir // Bidirectional sensor bus
+);
+
+  // Clk/Mhz management + paramaters
+  reg clk_1mhz_en; // 1 MHz : 1/50 FPGA clock
+  reg [6:0] clk_cnt; // clock count
+  reg [20:0] cnt_1mhz; // 1 Mhz cycle count (1us)
+  reg [20:0] trig_timer; // Target trigger signal time (2 Seconds).
+  reg line_switch; // Used to track wier changes for timing.
+
+  // Port management
+  reg dout; // Data sending to sensor wire
+  reg bidir_en;
+  
+  // Sensor related
+  reg [2:0]comm_status; // [2] : response signal UP not/been recieved, [1] : response signal DOWN not/been recieved, [0] : active/inactive communication.
+  reg [39:0] raw_data; // Store values before passing to output.
+  reg [5:0] data_idx; // Tracks the current index to update in raw_data.
+  reg [31:0] fin_data; // Validated data for output.
+  reg [9:0] sum_data; // sum of data without checksum
+  reg [7:0] int_checksum; // Checksum comparison
+  
+  reg [7:0] temp_int;
+  reg [7:0] temp_dec;
+  reg [7:0] hum_int;
+  reg [7:0] hum_dec;
+  
+  reg [7:0] led_test;
+  reg indicator;
+ 
+
+  initial begin
+    
+	clk_1mhz_en <= 1'b0;
+    clk_cnt <= 7'b0; // Start clock counter at zero
+    cnt_1mhz <= 21'b0; // Start value at zero
+	 trig_timer <= 21'd1999999; // Set target trigger signal time to 2 seconds.
+//    trig_timer <= 21'd18001; // For testing sake, set trig far lower.
+    dout <= 1;
+    bidir_en <= 1; // Enable for sending.
+    comm_status <= 3'b0;
+    raw_data <= 40'b0;
+    data_idx <= 6'd39; // Starts at lhs to mimic how its received.
+    fin_data <= 32'b0;
+    sum_data <= 10'b0;
+    int_checksum <= 8'b11111111;
+    hum_int <= 8'b0;
+    hum_dec <= 8'b0; 
+    temp_int <= 8'b0; 
+    temp_dec <= 8'b0;
+    line_switch <= 1'b0;
+	 led_test <= 8'b0;
+	 indicator <= 1'b0;
+            
+
+  end
+	
+  // single bus communication behaviour with sensor
+  assign bidir = bidir_en ? dout : 1'bZ;
+  // assign outp = fin_data;
+  assign LED = led_test[7:0];
+  assign ext_LED = indicator;
+
+
+  // Action taken every 1Mhz (1us)
+  always @(posedge clk) begin
+    
+    // Default Assignment
+    clk_1mhz_en <= 1'b0;
+    
+    if (clk_cnt == 49) begin
+      clk_1mhz_en <= 1'b1; // Enable 1mhz to perform action (1us)
+      clk_cnt <= 0; // Reset clk counter
+    end
+    else
+      clk_cnt <= clk_cnt +1; // Increase clk counter
+    
+    if (clk_1mhz_en) begin
+	 
+      // Trigger signal send after every 2 seconds
+      if (cnt_1mhz == trig_timer) begin
+        $display("Trigger signal - dropping to low for 18ms. Pre operation: cnt: %d, status: %b, H/L: %b", cnt_1mhz, comm_status, dout);
+        comm_status[0] <= 1; // Set to active
+        dout <= 0; // Drop low
+        cnt_1mhz <= 21'b0; // Reset for timings
+		  // led_test[0] <= 1'b1;
+    
+      end
+      
+      // Already communicating
+      else if (comm_status[0]) begin
+        
+        // WAITING TO FINISH TRIGGER SIGNAL
+        if (bidir_en == 1) begin // Sender.
+          
+          if (cnt_1mhz == 17999) begin // Trigger signal check: waited low for 18,000us (18ms)
+            $display("Trigger signal - 18ms done, raise and set to receive. cnt: %d, status: %b, H/L: %b", cnt_1mhz, comm_status, dout);
+          	dout <= 1; // Set to high
+            bidir_en <= 0; // Set to receiver
+            cnt_1mhz <= 21'b0; // Reset for timings
+				// led_test[1] <= 1'b1; DEBUGGING				
+          end
+          else
+            cnt_1mhz <= cnt_1mhz + 1; // 1 mhz count up
+          
+        end
+        
+        // AWAIT RESPONSE DOWN
+        else if (comm_status[1] == 0) begin // Receiver but no response signal yet.
+          
+          // Wire value change check & counter reset
+          if ((bidir == 0) & (line_switch == 0)) begin
+				cnt_1mhz <= 0;
+            line_switch <= 1;
+          end
+          
+          else if ( (cnt_1mhz >= 76) & (cnt_1mhz <= 84) & (bidir == 1)) begin// Covers the DOWN of the response 
+            $display("Response signal DOWN 80us received, await 80us up. cnt: %d, status: %b, H/L: %b", cnt_1mhz, comm_status, bidir);
+            comm_status[1] <= 1; // Response DOWN received
+            cnt_1mhz <= 21'b0; // Reset for timings
+            line_switch <= 0;
+				// led_test[2] <= 1'b1; DEBUGGING
+            
+          end
+          else
+            cnt_1mhz <= cnt_1mhz + 1; // 1 mhz count up
+        end
+        
+        // AWAIT RESPONSE UP
+        else if (comm_status[2] == 0) begin
+		  
+		    // // =============== ISSUE DIAGNOSED TO OCCUR HERE ========================
+			 // // DEBUGGING: Ever goes low? YES
+          // if (bidir == 0) 
+				// led_test[7] <= 1'b1;
+			 
+		    // // DEBUGGING: Ever goes back high? YES. Switch occurs outside expected timeframe? YES 
+		    // if(cnt_1mhz >= (trig_timer - 100000) ) begin
+			   // led_test[4:0] <= 7'b0;
+				// cnt_1mhz <= 0;
+				// comm_status <= 0;
+				// if (bidir == 0)
+				  // led_test[6] <= 1'b1;
+			 // end
+			 
+			 // // DEBUGGIN: Locate switch timeframe.
+			 // if ( (cnt_1mhz >= 100) & (cnt_1mhz <= 110) & (bidir == 0))  
+			   // led_test[6] <= 1'b1;
+			   
+          // // ======================= REFER TO ABOVE ===============================
+			 
+			 // Altered timeframe based on results of testing - Cause unknown.
+          if ( (cnt_1mhz >= 100) & (cnt_1mhz <= 110) & (bidir == 0)) begin // Covers the UP of the response
+            $display("Response signal UP 80us received, bit transfer begins now. cnt: %d, status: %b", cnt_1mhz, comm_status);
+            comm_status[2] <= 1; // Response UP received. Response signal complete
+            cnt_1mhz <= 21'b0; // Reset for timings
+				// led_test[3] <= 1'b1; DEBUGGING
+          end
+          else
+            cnt_1mhz <= cnt_1mhz + 1; // 1 mhz count up
+			
+			
+          // if ( (cnt_1mhz >= 76) & (cnt_1mhz <= 84) & (bidir == 0)) begin // Covers the UP of the response
+            // $display("Response signal UP 80us received, bit transfer begins now. cnt: %d, status: %b", cnt_1mhz, comm_status);
+            // comm_status[2] <= 1; // Response UP received. Response signal complete
+            // cnt_1mhz <= 21'b0; // Reset for timings
+				// led_test[0] <= 1'b1;
+          // end
+          // else
+            // cnt_1mhz <= cnt_1mhz + 1; // 1 mhz count up
+        end
+        
+        // Wire value change check & counter reset
+        else if ((bidir == 1) & (line_switch == 0)) begin
+          cnt_1mhz <= 0;
+          line_switch <= 1;
+        end
+        
+        // DATA READING: EACH BIT SET APPROPRIATE VALUE
+        else if ( bidir == 0 ) begin // communcation active & response signal complete       
+          
+          
+          
+          // IF ALL BITS TRANSFERRED
+          if ((data_idx > 39) & (cnt_1mhz == 0)) begin // IDX loops above 39 after 0 and only occur first cycle after.
+            
+            // Set values to 0, will only change to new values if checksums valid.
+            fin_data <= 32'b0;
+            hum_int <= 8'b0;
+            hum_dec <= 8'b0; 
+            temp_int <= 8'b0; 
+            temp_dec <= 8'b0;
+            // led_test[6] <= 1'b1; DEBUGGING - does it arrive here? YES
+            // led_test[7:0] <= sum_data[7:0] + sum_data[9:8] + raw_data[7:0]; DEBUGGING - Checksum correct? NO
+				led_test[7:0] <= raw_data[15:8]; // DEBUGGING - Realistic: int T? YES, dec T? yes, int H? YES, dec H? TBD
+				indicator = ~indicator;
+				
+            if (int_checksum == (sum_data[7:0] + sum_data[9:8] + raw_data[7:0])) begin // wrap around the first two bits of sum data and add with checksum.
+              // Valid checksum, update values.
+              fin_data <= raw_data[39:8];
+              hum_int[7:0] <= raw_data[39:32];
+              hum_dec[7:0] <= raw_data[31:24];
+              temp_int[7:0] <= raw_data[23:16];
+              temp_dec[7:0] <= raw_data[15:8]; 
+			     // led_test[7] <= 1'b1; DEBUGGING
+            end
+            cnt_1mhz <= cnt_1mhz + 1; // 1 mhz count up
+          end
+          
+          // BIT = 0
+          else if ( (cnt_1mhz >= 22) & (cnt_1mhz <= 32) ) begin // Bit will be a 0 (26-28us), with 4us leeway.
+            $display("Bit %d = 0,  cnt: %d, all bits: %b", data_idx, cnt_1mhz, raw_data );
+            raw_data[data_idx] <= 0; // Set value into correct position
+            data_idx <= data_idx -1; 
+            cnt_1mhz <= 0;
+            line_switch <= 1;
+            sum_data <= (raw_data[39:32] + raw_data[31:24] + raw_data[23:16] + raw_data[15:8]); // Update with new sum
+          end
+          
+          // BIT = 1
+          else if ( (cnt_1mhz >= 66) & (cnt_1mhz <= 74) ) begin // Bit will be a 1 (70us), with 4us leeway.
+            $display("Bit %d = 1,  cnt: %d, all bits: %b", data_idx, cnt_1mhz, raw_data );
+            raw_data[data_idx] <= 1; // Set value into correct position
+            data_idx <= data_idx -1; 
+            cnt_1mhz <= 0;
+            line_switch <= 1;
+            sum_data <= (raw_data[39:32] + raw_data[31:24] + raw_data[23:16] + raw_data[15:8]); // Update with new sum
+          end
+          
+          // ALL COMPLETE, RESET REQUIRED VALUES FOR NEXT TRIGGER
+          else if (data_idx > 39) begin
+            $display("RESETTING VALUES");
+            clk_cnt <= 7'b0; // Start clock counter at zero
+            clk_1mhz_en <= 1'b0;
+            cnt_1mhz <= 21'b0; // Start value at zero
+            trig_timer <= 21'd1999999; // Set target trigger signal time to 2 seconds.
+            // trig_timer <= 21'd18001; // For testing sake, set trig far lower.
+            bidir_en <= 1; // Module becomes sender again
+            dout <= 1;
+            raw_data <= 40'b0;
+            data_idx <= 6'd39; // Starts at lhs to mimic how its received.
+            comm_status <= 3'b0;
+            sum_data <= 10'b0;
+				line_switch <= 1'b0;
+            
+          end        
+        end
+        else
+          cnt_1mhz <= cnt_1mhz + 1; // 1 mhz count up
+      end
+      else
+        cnt_1mhz <= cnt_1mhz + 1; // 1 mhz count up
+    end
+  end
+  
+endmodule
