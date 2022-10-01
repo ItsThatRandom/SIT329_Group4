@@ -1,0 +1,7 @@
+module lightsensor(
+	input lightsensor,
+	output led
+	);
+
+	assign led = lightsensor;
+endmodule

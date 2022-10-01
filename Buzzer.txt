@@ -1,0 +1,19 @@
+module Buzzer(clk, buzzer);
+input clk;
+output buzzer;
+parameter clkdivider = 25000000/440/2;
+
+reg [20:0] tone;
+always @(posedge clk) tone <= tone+1;
+
+reg [10:0] counter;
+always @(posedge clk) 
+	if(counter==0) 
+		counter <= (tone[20] ? clkdivider-1 : clkdivider/2-1); 
+	else counter <= counter-1;
+
+reg buzzer;
+always @(posedge clk) 
+	if(counter==0) 
+		buzzer <= ~buzzer;
+endmodule
