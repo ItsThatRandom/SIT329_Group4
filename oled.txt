@@ -1,0 +1,47 @@
+module oled_init(
+	input clock, 
+	input reset, 
+	input write, 
+	output reg oled_reset, 
+	output reg oled_dc, 
+	output reg [7:0] data, 
+	output reg enable, 
+	output init 
+);
+  
+reg [20:0] counter_delay; 
+reg counter_reset; 
+parameter reset_total = 10; 
+
+  reg[3:0] state ,next_state;//states of the machines
+  reg [7:0] init_store[27:0]; // storing command
+  reg [4:0] init_command; // starting commad count
+  reg [1:0] oled_command; //oled command count
+  reg [4:0] clear_counter; // clear counter
+  reg [10:0] Clear_data; // clear write data
+
+//beginning the oled commands
+initial begin
+  oled_command[0] = 8'h8D;
+  oled_command[1] = 8'h14;
+  oled_command[2] = 8'hAF;
+end
+
+//starting the oled writes
+OledOn:begin
+	enable <= 1'b1; 
+	oled_dc <= 1'b0; 
+  data <= oled_command[oled_command_counter];
+end
+// clearing command status
+ClearCmd:begin
+	enable <= 1'b1;
+	oled_dc <= 1'b0;
+  data <= clear_command[clear_counter];
+end
+// Wait for reset write command status
+WaitClearCmd:begin
+	enable <= 1'b0;
+end
+
+endmodule
